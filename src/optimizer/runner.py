@@ -7,7 +7,7 @@ import configparser
 
 from ..game_engine.card import Card
 from ..game_engine.deck import Deck, load_meta_decks
-from .fitness import calculate_fitness
+from . import fitness as fitness_calculator
 from .deck_generator import generate_population, INK_COLORS
 
 # --- Global Variables for GA --- 
@@ -39,10 +39,10 @@ def fitness_func(ga_instance, solution, solution_idx):
         return -999
 
     # Use a lower number of games for faster iteration during evolution
-    calculate_fitness.GAMES_PER_MATCHUP = 5 
+    fitness_calculator.GAMES_PER_MATCHUP = 5 
     
     # Pass the global all_cards_map to the fitness function for worker initialization
-    fitness = calculate_fitness(candidate_deck_cards, meta_decks, all_cards_map)
+    fitness = fitness_calculator.calculate_fitness(candidate_deck_cards, meta_decks, all_cards_map)
     return fitness
 
 def on_crossover(parents, offspring_size, ga_instance):
@@ -228,6 +228,27 @@ def run_ga(all_cards, meta_decks_tuple, num_generations=10, progress_queue=None)
 
     solution, solution_fitness, solution_idx = ga_instance.best_solution(pop_fitness=ga_instance.last_generation_fitness)
     best_deck_cards = [all_cards_map[idx_to_api_id[gene]] for gene in solution]
-    
     best_deck = Deck(name="Optimized Deck", cards=best_deck_cards)
-    return best_deck
+
+    # --- Final, more accurate fitness calculation for the best deck ---
+    if progress_queue:
+        progress_queue.put({"type": "status", "message": "Performing final analysis..."})
+
+    # Use the original, higher number of games for the final calculation from config
+    sim_config = config['simulation']
+    fitness_calculator.GAMES_PER_MATCHUP = sim_config.getint('games_per_matchup', 20)
+    
+    detailed_results = fitness_calculator.calculate_fitness(
+        best_deck_cards, 
+        meta_decks, 
+        all_cards_map, 
+        detailed_report=True
+    )
+    
+    # Reset to a lower value for any subsequent runs within the same session
+    fitness_calculator.GAMES_PER_MATCHUP = 5
+
+    return {
+        "best_deck": best_deck,
+        "results": detailed_results
+    }

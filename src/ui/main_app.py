@@ -18,6 +18,7 @@ class MainApp(ctk.CTk):
 
         self.title("Project Oracle")
         self.geometry("500x350")
+        self.last_results = None
 
         ctk.set_appearance_mode("Dark")
         ctk.set_default_color_theme("blue")
@@ -25,7 +26,7 @@ class MainApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
 
         self.title_label = ctk.CTkLabel(self, text="Project Oracle - Lorcana Deck Optimizer", font=ctk.CTkFont(size=20, weight="bold"))
-        self.title_label.grid(row=0, column=0, padx=20, pady=(20, 10), columnspan=1)
+        self.title_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
         self.welcome_label = ctk.CTkLabel(self, text="Welcome! Click 'Run Optimizer' to begin.", font=ctk.CTkFont(size=12))
         self.welcome_label.grid(row=1, column=0, padx=20, pady=10)
@@ -33,30 +34,32 @@ class MainApp(ctk.CTk):
         self.status_label = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=10))
         self.status_label.grid(row=2, column=0, padx=20, pady=0)
 
-        # --- Progress Bar and Fitness Label ---
         self.progress_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.progress_frame.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
-        
         self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
         self.progress_bar.pack(side="left", expand=True, fill="x", padx=(0, 10))
         self.progress_bar.set(0)
-
         self.fitness_label = ctk.CTkLabel(self.progress_frame, text="Best Fitness: N/A", font=ctk.CTkFont(size=12))
         self.fitness_label.pack(side="left")
-        self.progress_frame.grid_remove() # Hide it initially
+        self.progress_frame.grid_remove()
 
-        # --- Buttons ---
-        self.button_frame = ctk.CTkFrame(self)
+        self.button_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.button_frame.grid(row=4, column=0, padx=20, pady=20, sticky="s")
+        self.button_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
         self.run_button = ctk.CTkButton(self.button_frame, text="Run Optimizer", command=self.run_optimizer)
-        self.run_button.grid(row=0, column=0, padx=10)
+        self.run_button.grid(row=0, column=0, padx=5)
+
+        self.view_results_button = ctk.CTkButton(self.button_frame, text="View Results", command=self.show_results_window)
+        self.view_results_button.grid(row=0, column=1, padx=5)
+        self.view_results_button.grid_remove()
 
         self.exit_button = ctk.CTkButton(self.button_frame, text="Exit", command=self.destroy)
-        self.exit_button.grid(row=0, column=1, padx=10)
+        self.exit_button.grid(row=0, column=2, padx=5)
 
     def run_optimizer(self):
         self.run_button.configure(state="disabled")
+        self.view_results_button.grid_remove()
         self.status_label.configure(text="Loading cards and decks...")
         self.update_idletasks()
 
@@ -94,29 +97,33 @@ class MainApp(ctk.CTk):
         self.after(100, self.check_ga_progress)
 
     def _run_ga_in_thread(self, all_cards, meta_decks, num_generations, q):
-        """Wrapper to run GA and put the final result in the queue."""
         try:
-            best_deck = run_ga(all_cards, meta_decks, num_generations=num_generations, progress_queue=q)
-            q.put({"type": "complete", "result": best_deck})
+            results = run_ga(all_cards, meta_decks, num_generations=num_generations, progress_queue=q)
+            q.put({"type": "finished", "result": results})
         except Exception as e:
             q.put({"type": "error", "message": str(e)})
 
     def check_ga_progress(self):
-        """Periodically check the queue for updates from the GA thread."""
         try:
             message = self.progress_queue.get_nowait()
-            if message["type"] == "progress":
+            msg_type = message.get("type")
+
+            if msg_type == "progress":
                 progress = message["current"] / message["total"]
                 self.progress_bar.set(progress)
                 self.fitness_label.configure(text=f"Best Fitness: {message['best_fitness']:.4f}")
                 self.status_label.configure(text=f"Running... Generation {message['current']}/{message['total']}")
                 self.after(100, self.check_ga_progress)
-            elif message["type"] == "complete":
-                self.status_label.configure(text="Optimization complete!")
+            elif msg_type == "status":
+                self.status_label.configure(text=message["message"])
+                self.after(100, self.check_ga_progress)
+            elif msg_type == "finished":
+                self.last_results = message["result"]
+                self.status_label.configure(text="Optimization complete! Click 'View Results' to see the details.")
                 self.progress_frame.grid_remove()
                 self.run_button.configure(state="normal")
-                self.display_results(message["result"])
-            elif message["type"] == "error":
+                self.view_results_button.grid()
+            elif msg_type == "error":
                 self.status_label.configure(text=f"Error: {message['message']}")
                 self.progress_frame.grid_remove()
                 self.run_button.configure(state="normal")
@@ -128,31 +135,57 @@ class MainApp(ctk.CTk):
                 self.progress_frame.grid_remove()
                 self.run_button.configure(state="normal")
 
-    def display_results(self, best_deck):
-        if not best_deck:
-            self.status_label.configure(text="Optimization failed to find a valid deck.")
+    def show_results_window(self):
+        from collections import Counter
+        if not self.last_results:
             return
+
+        results_data = self.last_results['results']
+        best_deck = self.last_results['best_deck']
 
         results_window = ctk.CTkToplevel(self)
         results_window.title("Optimizer Results")
-        results_window.geometry("400x500")
+        results_window.geometry("600x700")
 
-        title_label = ctk.CTkLabel(results_window, text=f"Best Deck Found: {best_deck.name}", font=ctk.CTkFont(size=16, weight="bold"))
-        title_label.pack(pady=10)
+        summary_frame = ctk.CTkFrame(results_window)
+        summary_frame.pack(pady=10, padx=10, fill="x")
+        summary_frame.grid_columnconfigure(1, weight=1)
 
-        results_textbox = ctk.CTkTextbox(results_window, width=380, height=400, font=ctk.CTkFont(family="monospace"))
-        results_textbox.pack(pady=10, padx=10, fill="both", expand=True)
+        ctk.CTkLabel(summary_frame, text="Final Fitness:", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        ctk.CTkLabel(summary_frame, text=f"{results_data['final_fitness']:.4f}").grid(row=0, column=1, sticky="w", padx=5, pady=2)
 
-        card_counts = {}
-        for card in best_deck.cards:
-            card_counts[card.name] = card_counts.get(card.name, 0) + 1
-        
-        results_text = ""
-        for card_name, count in sorted(card_counts.items()):
-            results_text += f"{count}x {card_name}\n"
-        
-        results_textbox.insert("0.0", results_text)
-        results_textbox.configure(state="disabled")
+        ctk.CTkLabel(summary_frame, text="Raw Win Rate:", font=ctk.CTkFont(weight="bold")).grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        ctk.CTkLabel(summary_frame, text=f"{results_data['raw_win_rate']:.2%}").grid(row=1, column=1, sticky="w", padx=5, pady=2)
+
+        ctk.CTkLabel(summary_frame, text="Consistency Score:", font=ctk.CTkFont(weight="bold")).grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        ctk.CTkLabel(summary_frame, text=f"{results_data['consistency_score']:.2%}").grid(row=2, column=1, sticky="w", padx=5, pady=2)
+
+        win_rate_frame = ctk.CTkFrame(results_window)
+        win_rate_frame.pack(pady=10, padx=10, fill="x")
+        ctk.CTkLabel(win_rate_frame, text="Win Rates vs. Meta Decks", font=ctk.CTkFont(weight="bold")).pack(pady=5)
+
+        for deck_name, rate in sorted(results_data['win_rates_by_meta_deck'].items()):
+            deck_frame = ctk.CTkFrame(win_rate_frame, fg_color="transparent")
+            deck_frame.pack(fill="x", padx=10)
+            ctk.CTkLabel(deck_frame, text=f"{deck_name}:").pack(side="left")
+            ctk.CTkLabel(deck_frame, text=f"{rate:.2%}").pack(side="right")
+
+        decklist_frame = ctk.CTkFrame(results_window)
+        decklist_frame.pack(pady=10, padx=10, fill="both", expand=True)
+        ctk.CTkLabel(decklist_frame, text="Optimized Decklist", font=ctk.CTkFont(weight="bold")).pack()
+
+        deck_text = ""
+        card_counts = Counter(c.name for c in best_deck.cards)
+        for name, count in sorted(card_counts.items()):
+            deck_text += f"{count}x {name}\n"
+
+        textbox = ctk.CTkTextbox(decklist_frame, height=300, width=400)
+        textbox.pack(pady=10, padx=10, fill="both", expand=True)
+        textbox.insert("0.0", deck_text)
+        textbox.configure(state="disabled")
+
+        results_window.transient(self)
+        results_window.grab_set()
 
 def main():
     """Main application loop."""

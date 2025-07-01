@@ -46,10 +46,20 @@ def run_single_game(args):
     # The winner is one of the Player objects created inside the GameState instance.
     return (meta_deck_name, 1 if game.winner == game.player1 else 0)
 
-def calculate_fitness(candidate_deck_cards, meta_decks, all_cards_map):
+def calculate_fitness(candidate_deck_cards, meta_decks, all_cards_map, detailed_report=False):
     """
     Calculates the fitness of a candidate deck by simulating games against a meta in parallel.
     The fitness score is the overall win percentage, adjusted for deck consistency.
+
+    Args:
+        candidate_deck_cards (list): A list of Card objects for the candidate deck.
+        meta_decks (list): A list of Deck objects representing the meta.
+        all_cards_map (dict): A map of all card API IDs to Card objects.
+        detailed_report (bool): If True, returns a dictionary with detailed stats. 
+                                Otherwise, returns a single float fitness score.
+
+    Returns:
+        float or dict: The fitness score or a dictionary with detailed results.
     """
     # Convert card objects to simple IDs for serialization
     candidate_deck_ids = [card.api_id for card in candidate_deck_cards]
@@ -61,18 +71,23 @@ def calculate_fitness(candidate_deck_cards, meta_decks, all_cards_map):
         for _ in range(GAMES_PER_MATCHUP):
             tasks.append((candidate_deck_ids, meta_deck_ids, meta_deck.name))
 
-    # Run simulations in parallel with a progress bar
+    # Run simulations in parallel
     results = []
+    # Disable tqdm for non-detailed reports to speed up GA runs, and use the faster pool.map
+    use_tqdm = detailed_report 
     with Pool(processes=cpu_count(), initializer=init_worker, initargs=(all_cards_map,)) as pool:
-        # Using imap to get results as they are completed, which works well with tqdm
-        results = list(tqdm(pool.imap(run_single_game, tasks), total=len(tasks), desc="  Simulating Games", leave=False, ncols=100))
+        if use_tqdm:
+            results = list(tqdm(pool.imap(run_single_game, tasks), total=len(tasks), desc="  Simulating Final Games", leave=False, ncols=100))
+        else:
+            # Using map is faster when we don't need a progress bar
+            results = pool.map(run_single_game, tasks)
 
     total_wins = sum(win for _, win in results)
     total_games = len(results)
 
     raw_win_rate = (total_wins / total_games) if total_games > 0 else 0
     
-    # --- New Consistency Score Calculation as per specification ---
+    # --- Consistency Score Calculation ---
     card_counts = Counter(card.name for card in candidate_deck_cards)
     
     c4_cards = sum(4 for count in card_counts.values() if count == 4)
@@ -80,16 +95,30 @@ def calculate_fitness(candidate_deck_cards, meta_decks, all_cards_map):
     c2_cards = sum(2 for count in card_counts.values() if count == 2)
     c1_cards = sum(1 for count in card_counts.values() if count == 1)
 
-    # Formula: Consistency Score = (1.0 * c4 + 0.8 * c3 + 0.6 * c2 + 0.3 * c1) / 60
     consistency_score = (1.0 * c4_cards + 0.8 * c3_cards + 0.6 * c2_cards + 0.3 * c1_cards) / 60.0
-    
-    # Ensure consistency score is between 0.0 and 1.0
     consistency_score = max(0.0, min(consistency_score, 1.0))
 
     final_fitness = raw_win_rate * consistency_score
     
-    # This function is called for every individual in the population,
-    # so we should avoid printing too much. The GA main loop will print the best fitness.
+    if detailed_report:
+        win_counts = Counter()
+        games_played = Counter()
+        for meta_deck_name, win in results:
+            games_played[meta_deck_name] += 1
+            if win:
+                win_counts[meta_deck_name] += 1
+
+        win_rates_by_meta_deck = {
+            name: (win_counts[name] / games_played[name]) if games_played[name] > 0 else 0
+            for name in games_played
+        }
+        
+        return {
+            "final_fitness": final_fitness,
+            "raw_win_rate": raw_win_rate,
+            "consistency_score": consistency_score,
+            "win_rates_by_meta_deck": win_rates_by_meta_deck
+        }
     
     return final_fitness
 
@@ -112,7 +141,12 @@ if __name__ == '__main__':
         for name, count in Counter(c.name for c in candidate_deck_cards).items():
             print(f"  {count}x {name}")
 
-        fitness = calculate_fitness(candidate_deck_cards, meta_decks, all_cards_map)
-        print(f"\nCalculated Fitness: {fitness:.4f}")
+        fitness_details = calculate_fitness(candidate_deck_cards, meta_decks, all_cards_map, detailed_report=True)
+        print(f"\nCalculated Fitness: {fitness_details['final_fitness']:.4f}")
+        print(f"  - Raw Win Rate: {fitness_details['raw_win_rate']:.2%}")
+        print(f"  - Consistency Score: {fitness_details['consistency_score']:.2%}")
+        print("  - Win Rates vs Meta:")
+        for deck, rate in fitness_details['win_rates_by_meta_deck'].items():
+            print(f"    - {deck}: {rate:.2%}")
     else:
         print("Could not load cards or meta decks. Fitness calculation aborted.")
