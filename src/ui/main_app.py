@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import os
+import configparser
 
 from ..game_engine.card import Card
 from ..game_engine.deck import Deck, load_meta_decks
@@ -58,7 +59,12 @@ class MainApp(ctk.CTk):
         self.status_label.configure(text="Running genetic algorithm...")
         self.update_idletasks()
 
-        best_deck = run_ga(all_cards, meta_decks, num_generations=10)
+        config = configparser.ConfigParser()
+        config_path = os.path.join(project_root, 'config.ini')
+        config.read(config_path)
+        num_generations = config.getint('genetic_algorithm', 'num_generations', fallback=10)
+
+        best_deck = run_ga(all_cards, meta_decks, num_generations=num_generations)
 
         self.status_label.configure(text="Optimization complete!")
         self.display_results(best_deck)

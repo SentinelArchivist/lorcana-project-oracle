@@ -2,11 +2,10 @@ import unittest
 import sys
 import os
 
-# Add the src directory to the Python path to allow for module imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+# No sys.path manipulation needed when running pytest from the project root
 
-from game_engine.game_state import GameState
-from game_engine.player import Player, BoardCharacter
+from src.game_engine.game_state import GameState
+from src.game_engine.player import Player, BoardCharacter
 from collections import deque
 from .test_utils import MockCard
 

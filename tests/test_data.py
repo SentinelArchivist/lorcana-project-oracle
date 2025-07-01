@@ -3,11 +3,10 @@ import sqlite3
 import os
 import sys
 
-# Add the src directory to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+# No sys.path manipulation needed when running pytest from the project root
 
-from game_engine.card import Card
-from game_engine.deck import Deck, load_meta_decks
+from src.game_engine.card import Card
+from src.game_engine.deck import Deck, load_meta_decks
 
 @pytest.fixture
 def temp_db(tmp_path):

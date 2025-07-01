@@ -1,3 +1,9 @@
+class MockDeck:
+    """A simplified Deck object for testing purposes."""
+    def __init__(self, name, cards):
+        self.name = name
+        self.cards = cards
+
 class MockCard:
     """A mock card object for testing that can be initialized with kwargs."""
     def __init__(self, name="Mock Card", **kwargs):

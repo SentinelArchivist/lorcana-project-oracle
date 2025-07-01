@@ -4,6 +4,7 @@ import os
 import numpy as np
 from collections import Counter
 import configparser
+from tqdm import tqdm
 
 from ..game_engine.card import Card
 from ..game_engine.deck import Deck, load_meta_decks
@@ -169,7 +170,6 @@ def run_ga(all_cards, meta_decks_tuple, num_generations=10):
     idx_to_api_id = {i: api_id for i, api_id in enumerate(card_api_ids)}
 
     config = configparser.ConfigParser()
-    # Assuming config.ini is in the project root
     config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'config.ini'))
     config.read(config_path)
 
@@ -179,25 +179,53 @@ def run_ga(all_cards, meta_decks_tuple, num_generations=10):
     initial_population_decks = generate_population(size=population_size, all_cards_map=all_cards_map)
     initial_population = [[api_id_to_idx[card.api_id] for card in deck] for deck in initial_population_decks]
 
+    # --- State and callback setup ---
+    pbar = tqdm(total=num_generations, desc="GA Generations", ncols=100, leave=False)
+    early_stopping_patience = ga_config.getint('early_stopping_patience', 10)
+    best_fitness_so_far = -999.0
+    generations_without_improvement = 0
+
+    def on_generation_callback(ga_instance):
+        nonlocal best_fitness_so_far, generations_without_improvement
+
+        pbar.update(1)
+        current_gen_best_fitness = np.max(ga_instance.last_generation_fitness)
+
+        if current_gen_best_fitness > best_fitness_so_far:
+            best_fitness_so_far = current_gen_best_fitness
+            generations_without_improvement = 0
+        else:
+            generations_without_improvement += 1
+        
+        pbar.set_postfix(best_fitness=f"{best_fitness_so_far:.4f}")
+
+        if generations_without_improvement >= early_stopping_patience:
+            print(f"\nEarly stopping triggered after {ga_instance.generations_completed} generations.")
+            return "stop"
+
     ga_instance = pygad.GA(
         num_generations=num_generations,
         num_parents_mating=ga_config.getint('num_parents_mating', 5),
         initial_population=initial_population,
         fitness_func=fitness_func,
+        on_generation=on_generation_callback,
         crossover_type=on_crossover,
         mutation_type=on_mutation,
         mutation_percent_genes=ga_config.getint('mutation_percent_genes', 5),
         gene_space=range(len(all_cards_map)),
-        allow_duplicate_genes=True,
-        # Suppress verbose output when run as a module
-        logging_level=2
+        allow_duplicate_genes=True
     )
 
-    ga_instance.run()
+    try:
+        ga_instance.run()
+    except KeyboardInterrupt:
+        print("\nGA interrupted by user. Returning best solution found so far.")
+    finally:
+        if pbar and not pbar.disable:
+            pbar.close()
 
-    solution, solution_fitness, solution_idx = ga_instance.best_solution()
+    solution, solution_fitness, solution_idx = ga_instance.best_solution(pop_fitness=ga_instance.last_generation_fitness)
     best_deck_cards = [all_cards_map[idx_to_api_id[gene]] for gene in solution]
     
-    # Return a Deck object
     best_deck = Deck(name="Optimized Deck", cards=best_deck_cards)
     return best_deck

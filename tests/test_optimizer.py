@@ -4,12 +4,12 @@ import os
 import sys
 from collections import Counter
 
-# Add the src directory to the Python path to allow for module imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+# No sys.path manipulation needed when running pytest from the project root
 
-from optimizer.runner import on_crossover, on_mutation, is_deck_valid, get_deck_inks
-from tests.test_utils import MockCard
-from game_engine.card import Card
+from src.optimizer.runner import run_ga, on_crossover, on_mutation, is_deck_valid, get_deck_inks
+from tests.test_utils import MockCard, MockDeck
+from src.game_engine.card import Card
+from unittest.mock import patch, MagicMock
 
 # --- Test Fixtures and Mock Data ---
 
@@ -35,7 +35,7 @@ def mock_ga_instance(all_cards_map):
 
     # This is a bit of a hack, but it's the simplest way to test the standalone functions
     # that rely on global state. A better long-term solution would be to refactor them into a class.
-    import optimizer.runner as runner
+    from src.optimizer import runner
     runner.all_cards_map = all_cards_map
     runner.api_id_to_idx = {api_id: i for i, api_id in enumerate(all_cards_map.keys())}
     runner.idx_to_api_id = {i: api_id for i, api_id in enumerate(all_cards_map.keys())}
@@ -111,3 +111,45 @@ def test_on_mutation(mock_ga_instance, all_cards_map):
     assert is_deck_valid(mutated_cards) == True
     card_counts = Counter(c.name for c in mutated_cards)
     assert all(count <= 4 for count in card_counts.values())
+
+
+@patch('src.optimizer.runner.calculate_fitness')
+@patch('src.optimizer.runner.generate_population')
+def test_run_ga_with_early_stopping_and_progress(mock_generate_population, mock_calculate_fitness, all_cards_map):
+    """Tests the full run_ga loop with progress bar, early stopping, and interruption."""
+    # Setup for mocking
+    card_api_ids = list(all_cards_map.keys())
+    idx_to_api_id = {i: api_id for i, api_id in enumerate(card_api_ids)}
+
+    # Mock what generate_population returns: a list of decks (list of lists of Card objects)
+    mock_solution = create_mock_deck_solution(all_cards_map, ['Amber', 'Amethyst'])
+    mock_deck_of_cards = [all_cards_map[idx_to_api_id[gene]] for gene in mock_solution]
+    mock_generate_population.return_value = [mock_deck_of_cards] * 15 # population_size
+
+    # Mock fitness to control the outcome for early stopping, accounting for elitism (1 parent saved).
+    # 15 for initial pop + 14 for each of the 11 generations in the run loop.
+    mock_calculate_fitness.side_effect = [0.8] * 15 + [0.7] * (14 * 11)
+
+    mock_meta_decks = [MockDeck(name=f"Meta Deck {i}", cards=[]) for i in range(3)]
+
+    # 1. Test Early Stopping
+    best_deck = run_ga(all_cards_map, mock_meta_decks, num_generations=50)
+
+    assert best_deck is not None
+    assert len(best_deck.cards) == 60
+    # GA runs for 1 (initial) + 11 (loop) = 12 generations.
+    # Due to elitism=1 (default), calls are 15 (initial) + 14 * 11 (loop) = 169
+    assert mock_calculate_fitness.call_count == 169
+
+    # 2. Test Keyboard Interrupt
+    mock_calculate_fitness.reset_mock()
+    mock_generate_population.reset_mock()
+    mock_generate_population.return_value = [mock_deck_of_cards] * 15
+    mock_calculate_fitness.side_effect = None
+    mock_calculate_fitness.return_value = 0.6  # Constant fitness
+
+    with patch('pygad.GA.run', side_effect=KeyboardInterrupt) as mock_run:
+        best_deck_interrupted = run_ga(all_cards_map, mock_meta_decks, num_generations=20)
+        assert best_deck_interrupted is not None
+        assert len(best_deck_interrupted.cards) == 60
+        mock_run.assert_called_once()
