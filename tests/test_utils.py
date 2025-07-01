@@ -15,7 +15,7 @@ class MockCard:
         self.type = kwargs.get('type', 'Character')
         self.strength = kwargs.get('strength', 1)
         self.willpower = kwargs.get('willpower', 1)
-        self.lore = kwargs.get('lore', 1)
+        self.lore = kwargs.get('lore', None)
         self.move_cost = kwargs.get('move_cost', None)
         self.text = kwargs.get('text', '')
         self.set_name = kwargs.get('set_name', 'The First Chapter')

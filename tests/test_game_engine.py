@@ -411,6 +411,21 @@ class TestGameEngine(unittest.TestCase):
         self.assertTrue(singer_char.is_exerted, "Singer character should be exerted after singing.")
         self.assertEqual(len(self.player1.hand), 0, "Hand should be empty after singing the song.")
 
+    def test_questing_with_no_lore_character(self):
+        """Test that questing with a character with no lore value does not crash and yields 0 lore."""
+        # This character has no lore value assigned, so it should default to 0.
+        no_lore_card = MockCard("Loreless Character", strength=1, willpower=1)
+        no_lore_char = BoardCharacter(no_lore_card, self.player1)
+        no_lore_char.is_newly_played = False
+        self.player1.characters_in_play.append(no_lore_char)
+
+        initial_lore = self.player1.lore
+        self.player1.quest(no_lore_char)
+
+        # Verification
+        self.assertEqual(self.player1.lore, initial_lore, "Player's lore should not change when questing with a no-lore character.")
+        self.assertTrue(no_lore_char.is_exerted, "Character should be exerted after attempting to quest.")
+
 
 if __name__ == '__main__':
     unittest.main()

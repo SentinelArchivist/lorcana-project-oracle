@@ -157,7 +157,7 @@ class Player:
         if not character_in_play.can_quest():
             return False
         
-        lore_gained = character_in_play.card.lore
+        lore_gained = character_in_play.card.lore or 0
         self.lore += lore_gained
         character_in_play.exert()
         if self.game_state and self.game_state.verbose:
@@ -332,13 +332,12 @@ class Player:
 
     def play_action(self, card_from_hand, ability_target=None, singer=None):
         """Plays an Action or Song card, with an option to sing it."""
-        # Ward Check: Opponent's effects cannot target a character with Ward.
-        if ability_target and hasattr(ability_target, 'card') and 'ward' in ability_target.card.keywords and ability_target.owner != self:
-            if self.game_state.verbose:
-                print(f"{self.name} cannot target {ability_target.card.name} because it has Ward.")
-            return False # Action fails before any cost is paid
-
         if card_from_hand.type not in ('Action', 'Action - Song') or card_from_hand not in self.hand:
+            return False
+
+        # Check for a valid target BEFORE paying any costs.
+        if not AbilityResolver.is_valid_target(ability_target, self):
+            # The resolver itself will print the reason if verbose is on
             return False
 
         play_cost = card_from_hand.cost
@@ -356,27 +355,15 @@ class Player:
             payment_successful = self.exert_ink(play_cost)
 
         if payment_successful:
-            # Check if the target is valid before proceeding
-            if ability_target:
-                # New Ward Check: Opponent's effects cannot target a character with Ward.
-                if hasattr(ability_target, 'card') and 'ward' in ability_target.card.keywords and ability_target.owner != self:
-                    if self.game_state.verbose:
-                        print(f"{self.name} cannot target {ability_target.card.name} because it has Ward.")
-                    return False
-
-                if not self.game_state.is_valid_target(ability_target, card_from_hand, self):
-                    if self.game_state.verbose:
-                        print(f"{self.name} failed to play {card_from_hand.name}: Invalid target.")
-                    return False
-
             self.hand.remove(card_from_hand)
             self.discard_pile.append(card_from_hand)
             if self.game_state.verbose and not can_sing:
                 print(f"{self.name} played action: {card_from_hand.name} for {play_cost} ink.")
-            
+        
             for ability in card_from_hand.parsed_abilities:
                 AbilityResolver.resolve_ability(ability, card_from_hand, self, target=ability_target)
             return True
+        
         return False
 
     def find_best_threat(self, opponent, damage=None):

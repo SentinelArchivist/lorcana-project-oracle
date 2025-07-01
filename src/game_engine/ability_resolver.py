@@ -48,3 +48,17 @@ class AbilityResolver:
             print(f"  -> {player.name} gains {lore_amount} lore.")
         player.lore += lore_amount
 
+    @staticmethod
+    def is_valid_target(target, source_card_owner):
+        """Checks if a target is valid for an ability (e.g., Ward)."""
+        if not target:
+            return True  # No target is a valid state
+
+        # Ward Check: Opponent's effects cannot target a character with Ward.
+        if hasattr(target, 'card') and 'ward' in target.card.keywords and target.owner != source_card_owner:
+            if source_card_owner.game_state.verbose:
+                print(f"INVALID TARGET: {target.card.name} has Ward and cannot be targeted by {source_card_owner.name}.")
+            return False
+
+        # Future checks for other targeting restrictions can be added here.
+        return True

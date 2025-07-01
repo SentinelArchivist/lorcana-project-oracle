@@ -34,11 +34,17 @@ def run_single_game(args):
     candidate_deck_cards = [worker_all_cards_map[api_id] for api_id in candidate_deck_ids]
     meta_deck_cards = [worker_all_cards_map[api_id] for api_id in meta_deck_ids]
 
-    player1 = Player(name="Candidate Deck", deck_cards=candidate_deck_cards)
-    player2 = Player(name=meta_deck_name, deck_cards=meta_deck_cards)
-    game = GameState(player1, player2, verbose=False) # Turn off verbose logging in workers
+    # GameState constructor expects deck_cards lists, not Player objects, and also the all_cards map.
+    game = GameState(
+        player1_deck=candidate_deck_cards, 
+        player2_deck=meta_deck_cards, 
+        all_cards=worker_all_cards_map, 
+        verbose=False
+    )
     game.run_simulation()
-    return (meta_deck_name, 1 if game.winner == player1 else 0)
+    
+    # The winner is one of the Player objects created inside the GameState instance.
+    return (meta_deck_name, 1 if game.winner == game.player1 else 0)
 
 def calculate_fitness(candidate_deck_cards, meta_decks, all_cards_map):
     """
