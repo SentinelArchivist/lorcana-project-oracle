@@ -8,7 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 's
 from game_engine.game_state import GameState
 from game_engine.player import Player, BoardCharacter
 from collections import deque
-from tests.test_utils import MockCard
+from .test_utils import MockCard
 
 class TestGameEngine(unittest.TestCase):
 
@@ -299,7 +299,7 @@ class TestGameEngine(unittest.TestCase):
         """Test that a player can play a character by spending the correct amount of ink."""
         character_card = MockCard("Playable Character", cost=3)
         self.player1.hand = [character_card]
-        self.player1.inkwell_ready = [MockCard("Ink")] * 4
+        self.player1.inkwell_ready = [MockCard(cost=1, inkable=True)] * 4  # Replaced with MockCard
 
         self.player1.play_character(character_card)
 
@@ -319,6 +319,98 @@ class TestGameEngine(unittest.TestCase):
 
         self.assertEqual(self.player1.lore, 2)
         self.assertTrue(questing_char.is_exerted)
+
+    def test_ward_keyword_protects_from_effects(self):
+        """Test that a character with Ward cannot be targeted by opponent's effects."""
+        # Player 1 has a character with Ward
+        ward_character_card = MockCard("Protected Character", strength=2, willpower=3, keywords={'ward': True})
+        ward_character = BoardCharacter(ward_character_card, self.player1)
+        self.player1.characters_in_play.append(ward_character)
+
+        # Player 2 has an action card that deals damage
+        damage_action_card = MockCard("Fire The Cannons!", type="Action", cost=1, parsed_abilities=[{'effect': 'DealDamage', 'value': 2, 'target': 'ChosenCharacter'}])
+        self.player2.hand.append(damage_action_card)
+        self.player2.inkwell_ready = [MockCard("Ink")] * 1
+
+        # Player 2 attempts to play the action targeting the Ward character
+        self.player2.play_action(damage_action_card, ability_target=ward_character)
+
+        # Verification: The character should have taken no damage
+        self.assertEqual(ward_character.damage, 0, "Character with Ward should not take damage from opponent's effect.")
+        # Verification: The action card should not have been played (or returned to hand if logic allows)
+        self.assertIn(damage_action_card, self.player2.hand, "Action card should remain in hand after targeting a Ward character.")
+        self.assertEqual(self.player2.get_available_ink(), 1, "Ink should not be spent on a failed action.")
+
+
+
+    def test_resist_keyword_reduces_damage(self):
+        """Test that the Resist keyword reduces incoming challenge damage."""
+        # Player 1's character (Attacker)
+        attacker_card = MockCard("Attacker", strength=3, willpower=4)
+        attacker = BoardCharacter(attacker_card, self.player1)
+        attacker.is_newly_played = False
+        self.player1.characters_in_play.append(attacker)
+
+        # Player 2's character (Defender with Resist +1)
+        defender_card = MockCard("Resistant Defender", strength=2, willpower=5, keywords={'resist +1': True})
+        defender = BoardCharacter(defender_card, self.player2)
+        defender.is_exerted = True
+        self.player2.characters_in_play.append(defender)
+
+        # Execute the challenge
+        self.player1.challenge(attacker, defender)
+
+        # Verification: Defender should take 3 (attacker strength) - 1 (resist) = 2 damage.
+        self.assertEqual(defender.damage, 2, "Defender with Resist +1 should take 1 less damage.")
+        # Verification: Attacker still takes full damage
+        self.assertEqual(attacker.damage, 2, "Attacker should take full damage from the defender.")
+
+
+    def test_reckless_keyword_forces_challenge(self):
+        """Test that a Reckless character must challenge if able."""
+        # Player 1's character with Reckless
+        reckless_card = MockCard("Reckless Character", strength=3, willpower=3, lore=1, keywords={'reckless': True})
+        reckless_char = BoardCharacter(reckless_card, self.player1)
+        reckless_char.is_newly_played = False  # Can act
+        self.player1.characters_in_play.append(reckless_char)
+
+        # Player 2's character that can be challenged
+        target_card = MockCard("Target Dummy", strength=2, willpower=4)
+        target_char = BoardCharacter(target_card, self.player2)
+        target_char.is_exerted = True
+        self.player2.characters_in_play.append(target_char)
+
+        # Run the AI for character actions
+        self.player1.ai_character_actions(self.player2)
+
+        # Verification: Reckless character should have challenged, not quested.
+        self.assertTrue(reckless_char.is_exerted, "Reckless character should be exerted after challenging.")
+        self.assertEqual(target_char.damage, 3, "Target character should have taken damage from the challenge.")
+        self.assertEqual(self.player1.lore, 0, "Player should not have gained lore from questing with the Reckless character.")
+
+
+    def test_singer_keyword_plays_song_for_free(self):
+        """Test that a character with Singer can play a song of equal or lesser cost for free."""
+        # Player 1 has a character with Singer 3
+        singer_card = MockCard("Ariel - Spectacular Singer", strength=2, willpower=3, lore=1, keywords={'singer 3': True})
+        singer_char = BoardCharacter(singer_card, self.player1)
+        singer_char.is_newly_played = False  # Can act
+        self.player1.characters_in_play.append(singer_char)
+
+        # Player 1 has a song that costs 3
+        song_card = MockCard("Part of Your World", type="Action - Song", cost=3, parsed_abilities=[{'effect': 'DrawCard', 'value': 2}])
+        self.player1.hand.append(song_card)
+
+        # Player 1 has no ink, so they MUST sing
+        self.assertEqual(self.player1.get_available_ink(), 0)
+
+        # Run the AI to play cards
+        self.player1.ai_play_cards(self.player2)
+
+        # Verification: The song should be played, and the singer exerted
+        self.assertIn(song_card, self.player1.discard_pile, "Song card should be in the discard pile after being sung.")
+        self.assertTrue(singer_char.is_exerted, "Singer character should be exerted after singing.")
+        self.assertEqual(len(self.player1.hand), 0, "Hand should be empty after singing the song.")
 
 
 if __name__ == '__main__':

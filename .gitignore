@@ -123,3 +123,6 @@ dmypy.json
 *.db
 *.sqlite
 *.sqlite3
+
+# macOS
+.DS_Store

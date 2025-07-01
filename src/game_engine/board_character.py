@@ -44,6 +44,32 @@ class BoardCharacter:
     def is_banished(self):
         return self.remaining_willpower <= 0
 
+    @property
+    def resist_value(self):
+        """Parses the 'Resist +X' keyword and returns the value of X."""
+        for keyword in self.card.keywords:
+            if keyword.lower().startswith('resist'):
+                try:
+                    # e.g., "resist +2" -> "2"
+                    value = int(keyword.split('+')[1].strip())
+                    return value
+                except (IndexError, ValueError):
+                    continue  # Ignore malformed resist tags
+        return 0
+
+    @property
+    def singer_value(self):
+        """Parses the 'Singer X' keyword and returns the value of X."""
+        for keyword in self.card.keywords:
+            if keyword.lower().startswith('singer'):
+                try:
+                    # e.g., "singer 3" -> "3"
+                    value = int(keyword.split(' ')[1])
+                    return value
+                except (IndexError, ValueError):
+                    continue
+        return 0
+
     def can_quest(self):
         """A character can quest if it's ready and its ink isn't drying (not newly played)."""
         return self.is_ready and not self.is_newly_played and self.location is None

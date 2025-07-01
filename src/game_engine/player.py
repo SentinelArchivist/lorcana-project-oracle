@@ -174,13 +174,16 @@ class Player:
 
         attacker.exert()
         
-        attacker_strength = (attacker.strength or 0) + attacker.temp_strength_boost
+        # Calculate effective strength for the challenge
+        attacker_strength = attacker.strength
         if 'challenger' in attacker.card.keywords:
-            # The Challenger keyword adds to the character's strength for that challenge
-            attacker_strength += attacker.card.keywords['challenger']
+            attacker_strength += attacker.card.keywords.get('challenger', 0)
 
-        defender_strength = defender.strength or 0       
-        defender.damage += attacker_strength
+        defender_strength = defender.strength
+
+        # Apply damage, accounting for Resist
+        damage_to_defender = max(0, attacker_strength - defender.resist_value)
+        defender.damage += damage_to_defender
         attacker.damage += defender_strength
         
         if self.game_state and self.game_state.verbose:
@@ -228,7 +231,6 @@ class Player:
                 print(f"{self.name} moved {character.card.name} to {location.card.name} for {move_cost} ink.")
             return True
         return False
-
     # --- AI Action Methods ---
 
     def ai_ink_card(self, opponent):
@@ -291,9 +293,9 @@ class Player:
                         best_play.update(play_option)
 
                 # B. Evaluate singing the card (if it's a song)
-                if card.type == 'Action - Song':
+                if "Song" in card.type:
                     for singer in self.get_ready_characters():
-                        if singer.card.cost >= card.cost:  # Can this character sing this song?
+                        if singer.singer_value >= card.cost:  # Can this character sing this song?
                             play_option = self.score_play(card, opponent, cost_override=0)
                             # The cost of singing is losing the singer's quest/challenge action
                             play_option['score'] -= (singer.card.lore or 0)
@@ -330,12 +332,18 @@ class Player:
 
     def play_action(self, card_from_hand, ability_target=None, singer=None):
         """Plays an Action or Song card, with an option to sing it."""
+        # Ward Check: Opponent's effects cannot target a character with Ward.
+        if ability_target and hasattr(ability_target, 'card') and 'ward' in ability_target.card.keywords and ability_target.owner != self:
+            if self.game_state.verbose:
+                print(f"{self.name} cannot target {ability_target.card.name} because it has Ward.")
+            return False # Action fails before any cost is paid
+
         if card_from_hand.type not in ('Action', 'Action - Song') or card_from_hand not in self.hand:
             return False
 
         play_cost = card_from_hand.cost
         can_sing = False
-        if singer and card_from_hand.type == 'Action - Song' and singer.card.cost >= play_cost:
+        if singer and "Song" in card_from_hand.type and singer.is_ready and singer.singer_value >= play_cost:
             can_sing = True
             play_cost = 0
 
@@ -348,6 +356,19 @@ class Player:
             payment_successful = self.exert_ink(play_cost)
 
         if payment_successful:
+            # Check if the target is valid before proceeding
+            if ability_target:
+                # New Ward Check: Opponent's effects cannot target a character with Ward.
+                if hasattr(ability_target, 'card') and 'ward' in ability_target.card.keywords and ability_target.owner != self:
+                    if self.game_state.verbose:
+                        print(f"{self.name} cannot target {ability_target.card.name} because it has Ward.")
+                    return False
+
+                if not self.game_state.is_valid_target(ability_target, card_from_hand, self):
+                    if self.game_state.verbose:
+                        print(f"{self.name} failed to play {card_from_hand.name}: Invalid target.")
+                    return False
+
             self.hand.remove(card_from_hand)
             self.discard_pile.append(card_from_hand)
             if self.game_state.verbose and not can_sing:
@@ -496,24 +517,14 @@ class Player:
 
             best_challenge_option = {'target': None, 'score': -1}
             if char.can_challenge():
-                # In desperation mode, any character that can quest is a must-remove target.
-                # We check all characters, not just exerted ones.
-                possible_targets = opponent.characters_in_play if desperation_mode else opponent.get_exerted_characters()
-                
+                possible_targets = opponent.get_exerted_characters()
                 for target in possible_targets:
-                    # In desperation mode, we can only challenge exerted characters, but we assess all to see if we SHOULD challenge.
-                    # This logic assumes we are looking for exerted targets, let's stick to that for now.
-                    if desperation_mode and not target.is_exerted:
-                        continue # Can't challenge a ready character
-
                     can_banish = (char.strength or 0) >= target.remaining_willpower
                     will_be_banished = (target.strength or 0) >= char.remaining_willpower
                     score = 0
 
-                    # In desperation mode, any banish of a character that can quest is a top priority.
                     if desperation_mode and can_banish and (target.card.lore or 0) > 0:
-                        score = 100 + (target.card.lore or 0) # Overwhelming score to force the action
-                    # Normal mode logic
+                        score = 100 + (target.card.lore or 0)
                     elif not desperation_mode:
                         if can_banish and (target.card.lore or 0) >= 2:
                             score = 20 + (target.card.lore or 0)
@@ -527,9 +538,16 @@ class Player:
                         best_challenge_option['score'] = score
                         best_challenge_option['target'] = target
 
-            # Decision threshold changes in desperation mode
-            challenge_threshold = 50 if desperation_mode else (char.card.lore or 0) + 2
+            # Reckless characters MUST challenge if a target is available.
+            is_reckless = 'reckless' in char.card.keywords
+            if is_reckless and best_challenge_option['target']:
+                if self.game_state.verbose:
+                    print(f"{self.name}'s AI is forced to make a RECKLESS challenge with {char.card.name} against {best_challenge_option['target'].card.name}.")
+                self.challenge(char, best_challenge_option['target'])
+                continue  # Move to the next character
 
+            # Normal decision logic
+            challenge_threshold = 50 if desperation_mode else (char.card.lore or 0) + 2
             if best_challenge_option['score'] > challenge_threshold:
                 if self.game_state.verbose:
                     mode = "DESPERATE" if desperation_mode else "strategic"

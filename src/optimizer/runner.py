@@ -1,18 +1,14 @@
 import pygad
 import random
 import os
-import sys
 import numpy as np
 from collections import Counter
 import configparser
 
-# Add the src directory to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from game_engine.card import Card
-from game_engine.deck import load_meta_decks
-from optimizer.fitness import calculate_fitness
-from optimizer.deck_generator import generate_population, INK_COLORS
+from ..game_engine.card import Card
+from ..game_engine.deck import Deck, load_meta_decks
+from .fitness import calculate_fitness
+from .deck_generator import generate_population, INK_COLORS
 
 # --- Global Variables for GA --- 
 all_cards_map = None
@@ -162,34 +158,29 @@ def on_mutation(offspring, ga_instance):
     return np.array(mutated_offspring)
 
 
-if __name__ == '__main__':
-    print("--- Project Oracle: Initializing ---")
-    db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'lorcana.db'))
-    all_cards_map = Card.load_all_cards(db_path)
-    meta_decks = load_meta_decks(db_path, all_cards_map)
+def run_ga(all_cards, meta_decks_tuple, num_generations=10):
+    """Runs the genetic algorithm to optimize a deck."""
+    global all_cards_map, meta_decks, api_id_to_idx, idx_to_api_id
+    all_cards_map = all_cards
+    meta_decks = meta_decks_tuple
 
-    if not all_cards_map or not meta_decks:
-        print("Fatal: Could not load data. Aborting.")
-        sys.exit(1)
-
-    # Create mappings between string api_id and integer index
     card_api_ids = list(all_cards_map.keys())
     api_id_to_idx = {api_id: i for i, api_id in enumerate(card_api_ids)}
     idx_to_api_id = {i: api_id for i, api_id in enumerate(card_api_ids)}
 
     config = configparser.ConfigParser()
+    # Assuming config.ini is in the project root
     config_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'config.ini'))
     config.read(config_path)
 
     ga_config = config['genetic_algorithm']
     population_size = ga_config.getint('population_size', 20)
 
-    print("\n--- Generating Initial Population ---")
     initial_population_decks = generate_population(size=population_size, all_cards_map=all_cards_map)
     initial_population = [[api_id_to_idx[card.api_id] for card in deck] for deck in initial_population_decks]
 
     ga_instance = pygad.GA(
-        num_generations=ga_config.getint('num_generations', 10),
+        num_generations=num_generations,
         num_parents_mating=ga_config.getint('num_parents_mating', 5),
         initial_population=initial_population,
         fitness_func=fitness_func,
@@ -197,17 +188,16 @@ if __name__ == '__main__':
         mutation_type=on_mutation,
         mutation_percent_genes=ga_config.getint('mutation_percent_genes', 5),
         gene_space=range(len(all_cards_map)),
-        allow_duplicate_genes=True
+        allow_duplicate_genes=True,
+        # Suppress verbose output when run as a module
+        logging_level=2
     )
 
-    print("\n--- Starting Genetic Algorithm ---")
     ga_instance.run()
-    print("--- Genetic Algorithm Finished ---")
 
     solution, solution_fitness, solution_idx = ga_instance.best_solution()
-    print(f"\nBest solution fitness: {solution_fitness}")
-    print("\n--- Oracle's Strongest Deck ---")
     best_deck_cards = [all_cards_map[idx_to_api_id[gene]] for gene in solution]
-    card_name_counts = Counter(c.name for c in best_deck_cards)
-    for name, count in sorted(card_name_counts.items()):
-        print(f"{count}x {name}")
+    
+    # Return a Deck object
+    best_deck = Deck(name="Optimized Deck", cards=best_deck_cards)
+    return best_deck
